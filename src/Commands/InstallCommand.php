@@ -16,7 +16,11 @@ use Marko\DevAi\Installation\InstallationOrchestrator;
 use Marko\DevAi\Process\CommandRunnerInterface;
 use Marko\DevAi\Process\ConfirmationPrompterInterface;
 
-#[Command(name: 'devai:install', description: 'Install Marko AI development tooling for selected agents')]
+#[Command(
+    name: 'devai:install',
+    description: 'Install Marko AI development tooling for selected agents',
+    flags: ['force', 'update-gitignore', 'skip-lsp-deps', 'no-interaction'],
+)]
 readonly class InstallCommand implements CommandInterface
 {
     public function __construct(

@@ -192,6 +192,12 @@ it('is registered via Command attribute with name devai:install', function (): v
         ->and($attributes[0]->newInstance()->name)->toBe('devai:install');
 });
 
+it('declares its boolean flags on the Command attribute', function (): void {
+    $attribute = new ReflectionClass(InstallCommand::class)->getAttributes(Command::class)[0]->newInstance();
+
+    expect($attribute->flags)->toBe(['force', 'update-gitignore', 'skip-lsp-deps', 'no-interaction']);
+});
+
 // ---------------------------------------------------------------------------
 // New tests: docs driver prompt flow
 // ---------------------------------------------------------------------------
