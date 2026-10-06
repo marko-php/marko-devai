@@ -76,6 +76,10 @@ class InstallationOrchestrator
             $this->log[] = $notice;
         }
 
+        foreach (SkillsDistributor::takeNotices() as $notice) {
+            $this->log[] = '[skills] WARNING: ' . $notice;
+        }
+
         $markerDir = $projectRoot . '/.marko';
         if (!is_dir($markerDir)) {
             mkdir($markerDir, 0755, true);
@@ -185,7 +189,28 @@ class InstallationOrchestrator
             return [];
         }
 
-        return array_values(array_filter($decoded['shippedSkills'], 'is_string'));
+        // The marker may be committed to (and so planted in) a repository, and
+        // these names are later joined onto paths that get recursively deleted.
+        // Only single, safe path segments survive; anything else is dropped
+        // loudly rather than trusted.
+        $names = [];
+        foreach ($decoded['shippedSkills'] as $name) {
+            if (!is_string($name)) {
+                continue;
+            }
+            if (!SkillsDistributor::isValidSkillName($name)) {
+                $this->log[] = '[skills] WARNING: ignoring invalid shippedSkills entry '
+                    . json_encode(
+                        $name,
+                        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE,
+                    )
+                    . ' in .marko/devai.json — it will not be cleaned up. The marker may have been tampered with.';
+                continue;
+            }
+            $names[] = $name;
+        }
+
+        return $names;
     }
 
     /**

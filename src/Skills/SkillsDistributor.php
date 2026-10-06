@@ -17,8 +17,23 @@ class SkillsDistributor
 
     private const string VENDOR_SKILLS_REL_PATH = '/vendor/marko/claude-plugins/plugins/marko-skills/skills';
 
+    /**
+     * A skill name is a single, lowercase path segment. Anything else (path
+     * separators, `..`, leading dots, NUL bytes, trailing newlines) is refused
+     * before it is ever joined onto a filesystem path.
+     */
+    private const string SKILL_NAME_PATTERN = '/\A[a-z0-9][a-z0-9._-]*\z/';
+
     /** @var list<string> */
     private array $warnings = [];
+
+    /**
+     * Orphan-cleanup notices from the static sync path, drained by the
+     * installation orchestrator into the command output.
+     *
+     * @var list<string>
+     */
+    private static array $notices = [];
 
     private readonly string $projectRoot;
 
@@ -120,6 +135,12 @@ class SkillsDistributor
      * current $bundles. User-authored skills in the same directory are left
      * untouched because they were never in $previouslyShipped.
      *
+     * $previouslyShipped comes from `.marko/devai.json`, which may be committed
+     * to (and therefore planted in) a repository. Names that are not a single
+     * safe path segment, orphans that are symlinks, and orphans that do not
+     * resolve to a direct child of $targetDir are skipped and reported via
+     * takeNotices() — never deleted.
+     *
      * @param list<SkillBundle> $bundles
      * @param list<string> $previouslyShipped top-level skill names devai shipped on the prior install
      */
@@ -134,11 +155,61 @@ class SkillsDistributor
             if (isset($written[$priorName])) {
                 continue;
             }
-            $orphanDir = $targetDir . '/' . $priorName;
-            if (is_dir($orphanDir)) {
-                self::removeDir($orphanDir);
+            if (!self::isValidSkillName($priorName)) {
+                self::$notices[] = 'Refusing to remove previously-shipped skill ' . self::describeName($priorName)
+                    . " from $targetDir: not a valid skill name (expected lowercase letters, digits, '.', '_' or '-',"
+                    . ' starting with a letter or digit). Check .marko/devai.json for tampering.';
+                continue;
             }
+            $orphanDir = $targetDir . '/' . $priorName;
+            if (is_link($orphanDir)) {
+                self::$notices[] = "Refusing to remove previously-shipped skill '$priorName' from $targetDir: it is a"
+                    . ' symlink. Remove it manually if it is no longer needed.';
+                continue;
+            }
+            if (!is_dir($orphanDir)) {
+                continue;
+            }
+            if (realpath(dirname($orphanDir)) !== realpath($targetDir)) {
+                self::$notices[] = "Refusing to remove previously-shipped skill '$priorName': it does not resolve"
+                    . " to a directory directly inside $targetDir.";
+                continue;
+            }
+            self::removeDir($orphanDir);
         }
+    }
+
+    /**
+     * Whether a skill name is a single safe, lowercase path segment.
+     */
+    public static function isValidSkillName(string $name): bool
+    {
+        return preg_match(self::SKILL_NAME_PATTERN, $name) === 1;
+    }
+
+    /**
+     * Drain the notices recorded by syncBundles().
+     *
+     * @return list<string>
+     */
+    public static function takeNotices(): array
+    {
+        $notices = self::$notices;
+        self::$notices = [];
+
+        return $notices;
+    }
+
+    /**
+     * Render an untrusted name for a message without letting control
+     * characters (NUL, newlines) leak into terminal output.
+     */
+    private static function describeName(string $name): string
+    {
+        return (string) json_encode(
+            $name,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE,
+        );
     }
 
     /**
@@ -249,7 +320,9 @@ class SkillsDistributor
             RecursiveIteratorIterator::CHILD_FIRST,
         );
         foreach ($iter as $f) {
-            $f->isDir() ? rmdir($f->getPathname()) : unlink($f->getPathname());
+            // Symlinks are unlinked, never followed — a link inside a shipped
+            // skill must not take its target down with it.
+            $f->isDir() && !$f->isLink() ? rmdir($f->getPathname()) : unlink($f->getPathname());
         }
         rmdir($dir);
     }

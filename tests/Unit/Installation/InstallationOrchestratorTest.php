@@ -678,3 +678,69 @@ it('does not hardcode the docs-fts package when resolving the driver to build', 
     expect($allArgs)->not->toContain('docs-fts:build')
         ->and($allArgs)->toContain('docs-vec:build');
 });
+
+it('drops unsafe shippedSkills names from the marker and warns loudly in the log', function (): void {
+    mkdir($this->tempRoot . '/.marko', 0755, true);
+    file_put_contents(
+        $this->tempRoot . '/.marko/devai.json',
+        json_encode([
+            'agents' => ['test-agent'],
+            'shippedSkills' => ['old-skill', '../../outside', '.hidden'],
+            'installedAt' => '2026-01-01T00:00:00+00:00',
+        ]),
+    );
+
+    $agent = makeInstallSpyAgent(installed: true);
+    $orchestrator = makeInstallOrchestrator(makeInstallRegistry(['test-agent' => $agent]));
+
+    $result = $orchestrator->install(
+        new InstallationContext(selectedAgents: ['test-agent'], force: true),
+        $this->tempRoot,
+    );
+
+    expect($agent->installedCtx->previouslyShipped)->toBe(['old-skill']);
+
+    $warnings = array_values(array_filter(
+        $result['log'],
+        static fn (string $line): bool => str_contains($line, 'shippedSkills'),
+    ));
+    expect($warnings)->toHaveCount(2)
+        ->and($warnings[0])->toContain('../../outside')
+        ->and($warnings[1])->toContain('.hidden');
+});
+
+it('surfaces orphan-cleanup notices from the skills distributor in the install log', function (): void {
+    $agent = new class () implements AgentInterface
+    {
+        public function name(): string
+        {
+            return 'test-agent';
+        }
+
+        public function displayName(): string
+        {
+            return 'Test Agent';
+        }
+
+        public function isInstalled(): bool
+        {
+            return true;
+        }
+
+        public function install(
+            InstallationContext $ctx,
+            string $projectRoot,
+        ): void {
+            SkillsDistributor::syncBundles([], $projectRoot . '/skills', ['../escape']);
+        }
+    };
+    $orchestrator = makeInstallOrchestrator(makeInstallRegistry(['test-agent' => $agent]));
+
+    $result = $orchestrator->install(new InstallationContext(selectedAgents: ['test-agent']), $this->tempRoot);
+
+    $notices = array_values(array_filter(
+        $result['log'],
+        static fn (string $line): bool => str_contains($line, '../escape'),
+    ));
+    expect($notices)->toHaveCount(1);
+});

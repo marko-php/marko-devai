@@ -479,3 +479,97 @@ it('skips a skill whose frontmatter name does not match the directory name', fun
         ->and($warnings[0])->toContain('frontmatter-name')
         ->and($warnings[0])->toContain('directory name');
 });
+
+it(
+    'syncBundles refuses a traversal orphan name and leaves directories outside the target untouched',
+    function (): void {
+        SkillsDistributor::takeNotices();
+
+        $outsideDir = $this->tempRoot . '/outside';
+        mkdir($outsideDir, 0755, true);
+        file_put_contents($outsideDir . '/precious.txt', 'do not delete');
+
+        $targetDir = $this->tempRoot . '/project/.gemini/skills';
+        mkdir($targetDir, 0755, true);
+
+        SkillsDistributor::syncBundles([], $targetDir, ['../../outside', '../../../outside']);
+
+        expect(file_exists($outsideDir . '/precious.txt'))->toBeTrue();
+
+        $notices = SkillsDistributor::takeNotices();
+        expect($notices)->toHaveCount(2)
+            ->and($notices[0])->toContain('../../outside')
+            ->and($notices[0])->toContain('Refusing');
+    },
+);
+
+it('syncBundles rejects unsafe orphan names without deleting anything', function (string $name): void {
+    SkillsDistributor::takeNotices();
+
+    $targetDir = $this->tempRoot . '/target-unsafe/skills';
+    mkdir($targetDir . '/keep', 0755, true);
+    file_put_contents($targetDir . '/keep/SKILL.md', 'keep');
+
+    SkillsDistributor::syncBundles([], $targetDir, [$name]);
+
+    expect(file_exists($targetDir . '/keep/SKILL.md'))->toBeTrue()
+        ->and(is_dir($targetDir))->toBeTrue()
+        ->and(SkillsDistributor::takeNotices())->toHaveCount(1);
+})->with([
+    'parent' => ['..'],
+    'current' => ['.'],
+    'empty' => [''],
+    'slash' => ['keep/../keep'],
+    'backslash' => ['keep\\sub'],
+    'nul byte' => ["keep\0"],
+    'leading dot' => ['.hidden'],
+    'absolute' => ['/tmp'],
+    'trailing newline' => ["keep\n"],
+    'uppercase' => ['Keep'],
+]);
+
+it('syncBundles refuses to remove an orphan that is a symlink', function (): void {
+    SkillsDistributor::takeNotices();
+
+    $outsideDir = $this->tempRoot . '/outside-link-target';
+    mkdir($outsideDir, 0755, true);
+    file_put_contents($outsideDir . '/precious.txt', 'do not delete');
+
+    $targetDir = $this->tempRoot . '/target-link/skills';
+    mkdir($targetDir, 0755, true);
+    symlink($outsideDir, $targetDir . '/old-skill');
+
+    SkillsDistributor::syncBundles([], $targetDir, ['old-skill']);
+
+    expect(file_exists($outsideDir . '/precious.txt'))->toBeTrue()
+        ->and(SkillsDistributor::takeNotices())->toHaveCount(1);
+
+    unlink($targetDir . '/old-skill');
+});
+
+it('syncBundles still removes a valid orphan and records no notice', function (): void {
+    SkillsDistributor::takeNotices();
+
+    $targetDir = $this->tempRoot . '/target-valid/skills';
+    mkdir($targetDir . '/old-skill.v2/nested', 0755, true);
+    file_put_contents($targetDir . '/old-skill.v2/nested/file.md', 'old');
+
+    SkillsDistributor::syncBundles([], $targetDir, ['old-skill.v2']);
+
+    expect(is_dir($targetDir . '/old-skill.v2'))->toBeFalse()
+        ->and(is_dir($targetDir))->toBeTrue()
+        ->and(SkillsDistributor::takeNotices())->toBe([]);
+});
+
+it('identifies valid skill names', function (string $name, bool $valid): void {
+    expect(SkillsDistributor::isValidSkillName($name))->toBe($valid);
+})->with([
+    ['marko-module', true],
+    ['skill_1.2', true],
+    ['9lives', true],
+    ['../x', false],
+    ['.x', false],
+    ['-x', false],
+    ['a/b', false],
+    ["a\n", false],
+]);
