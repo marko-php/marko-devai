@@ -14,12 +14,13 @@ use Marko\DevAi\Installation\AgentRegistry;
 use Marko\DevAi\Installation\DocsDriverResolver;
 use Marko\DevAi\Installation\InstallationContext;
 use Marko\DevAi\Installation\InstallationOrchestrator;
+use Marko\DevAi\Installation\IntelephenseEnsurer;
 use Marko\DevAi\Process\CommandRunnerInterface;
 
 #[Command(
     name: 'devai:install',
     description: 'Install Marko AI development tooling for selected agents',
-    flags: ['force', 'update-gitignore', 'skip-lsp-deps'],
+    flags: ['force', 'update-gitignore', 'skip-lsp-deps', 'yes'],
 )]
 readonly class InstallCommand implements CommandInterface
 {
@@ -59,7 +60,16 @@ readonly class InstallCommand implements CommandInterface
                     $detected[] = $name;
                 }
             }
-            $context = $this->buildContextFromDetection($detected, $force, $gitignoreArg, $output);
+            $context = $this->buildContextFromDetection($detected, $force, $gitignoreArg, $skipLspDeps, $output);
+        }
+
+        if (!$context->skipLspDeps && $this->declinesGlobalLspInstall($context, $input->hasOption('yes'), $output)) {
+            $context = new InstallationContext(
+                selectedAgents: $context->selectedAgents,
+                force: $context->force,
+                updateGitignore: $context->updateGitignore,
+                skipLspDeps: true,
+            );
         }
 
         $this->maybeInstallDocsDriver($output, $projectRoot);
@@ -114,6 +124,40 @@ readonly class InstallCommand implements CommandInterface
         $output->writeLine(
             '  https://marko.build/docs/ai-assisted-development/troubleshooting/#multiple-claude-code-instances-disconnect-mcp-servers',
         );
+    }
+
+    /**
+     * Ask before Claude Code's LSP dependency is installed globally with npm, since a
+     * global install touches the machine outside the project. Returns true only when
+     * the user declines. No question is asked with --yes, when the session is not
+     * interactive, when Claude Code is not selected, or when there is nothing to
+     * install (intelephense already on PATH, or npm missing — which fails loudly later).
+     */
+    private function declinesGlobalLspInstall(
+        InstallationContext $context,
+        bool $assumeYes,
+        Output $output,
+    ): bool {
+        if (
+            $assumeYes
+            || !in_array('claude-code', $context->selectedAgents, true)
+            || !$this->confirmationPrompter->isInteractive()
+            || $this->commandRunner->isOnPath('intelephense')
+            || !$this->commandRunner->isOnPath('npm')
+        ) {
+            return false;
+        }
+
+        $package = IntelephenseEnsurer::PACKAGE;
+        $question = "Claude Code's PHP language server needs intelephense. Install $package globally with `npm install -g`?";
+
+        if ($this->confirmationPrompter->confirm($question, default: true)) {
+            return false;
+        }
+
+        $output->writeLine("Skipping intelephense. Install it later with `npm install -g $package`.");
+
+        return true;
     }
 
     /**
@@ -177,6 +221,7 @@ readonly class InstallCommand implements CommandInterface
         array $detectedAgents,
         bool $force,
         bool $updateGitignore,
+        bool $skipLspDeps,
         Output $output,
     ): InstallationContext {
         $output->writeLine(
@@ -190,7 +235,7 @@ readonly class InstallCommand implements CommandInterface
             selectedAgents: $detectedAgents,
             force: $force,
             updateGitignore: $updateGitignore,
-            skipLspDeps: false,
+            skipLspDeps: $skipLspDeps,
         );
     }
 }

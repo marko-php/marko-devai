@@ -16,13 +16,7 @@ marko devai:install
 
 Detects every supported agent present in your environment and writes the correct configuration files for each one in a single pass.
 
-For Claude Code, `devai:install` also auto-installs `intelephense` globally via npm if it is not already on `PATH`. To skip that step:
-
-```bash
-marko devai:install --skip-lsp-deps
-```
-
-When `--skip-lsp-deps` is passed, settings are still written correctly; only the intelephense npm install is omitted. A warning is printed reminding you to install it manually before general PHP LSP diagnostics will work.
+For Claude Code, `devai:install` also offers to install a pinned `intelephense` release globally via npm when it is not already on `PATH`. Pass `--yes` to accept without the prompt, or `--skip-lsp-deps` to skip it.
 
 ## Documentation
 

@@ -8,6 +8,7 @@ use Marko\DevAi\Guidelines\GuidelinesAggregator;
 use Marko\DevAi\Installation\AgentRegistry;
 use Marko\DevAi\Installation\InstallationContext;
 use Marko\DevAi\Installation\InstallationOrchestrator;
+use Marko\DevAi\Installation\IntelephenseEnsurer;
 use Marko\DevAi\Process\CommandRunnerInterface;
 use Marko\DevAi\Rendering\AgentsMdRenderer;
 use Marko\DevAi\Skills\SkillsDistributor;
@@ -598,7 +599,7 @@ describe('--skip-lsp-deps integration (external project)', function (): void {
                 $runner->calls,
                 fn ($call) => $call[0] === 'npm'
                     && ($call[1][0] ?? '') === 'install'
-                    && in_array('intelephense', $call[1], true),
+                    && in_array(IntelephenseEnsurer::PACKAGE, $call[1], true),
             );
             expect(array_values($npmInstallCalls))->not->toBeEmpty();
         },
@@ -614,7 +615,7 @@ describe('--skip-lsp-deps integration (external project)', function (): void {
         $npmInstallCalls = array_filter(
             $runner->calls,
             fn ($call) => $call[0] === 'npm'
-                && in_array('intelephense', $call[1], true),
+                && in_array(IntelephenseEnsurer::PACKAGE, $call[1], true),
         );
         expect(array_values($npmInstallCalls))->toBeEmpty();
     });

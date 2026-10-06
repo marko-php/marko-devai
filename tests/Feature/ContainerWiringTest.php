@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Marko\Config\ConfigRepository;
+use Marko\Config\ConfigRepositoryInterface;
 use Marko\Core\Command\ConfirmationPrompterInterface;
 use Marko\Core\Command\Input;
 use Marko\Core\Command\Output;
@@ -25,6 +27,11 @@ function bootDevAiContainer(): Container
     $container->bind(ConfirmationPrompterInterface::class, StdinConfirmationPrompter::class);
     $container->instance(Input::class, new Input(['marko', 'devai:install']));
     $container->instance(Output::class, new Output(fopen('php://memory', 'w')));
+    // What marko/config binds in a running app, loaded with devai's shipped defaults
+    $container->instance(
+        ConfigRepositoryInterface::class,
+        new ConfigRepository(['devai' => require dirname(__DIR__, 2) . '/config/devai.php']),
+    );
 
     $parser = new ManifestParser();
     $registry = new BindingRegistry($container);

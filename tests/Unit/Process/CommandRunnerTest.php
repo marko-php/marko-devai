@@ -46,16 +46,47 @@ describe('CommandRunner', function (): void {
             ->and($result['exitCode'])->toBe(0);
     });
 
-    it('returns the proc_open failure shape when the process cannot start', function (): void {
-        $runner = new CommandRunner();
-        // Pass a command that proc_open will fail on by using a completely invalid path
-        // We mock this by testing the early-return path indirectly — since proc_open
-        // failure depends on the system, we test the return shape contract instead
-        // by passing a non-executable path on most systems
-        $result = $runner->run('/nonexistent/binary/that/does/not/exist/xyz123');
+    it('returns a non-zero exit code and a helpful stderr when the executable does not exist', function (): void {
+        $result = (new CommandRunner())->run('/nonexistent/binary/that/does/not/exist/xyz123');
 
-        expect($result)->toHaveKey('exitCode')
-            ->and($result)->toHaveKey('stdout')
-            ->and($result)->toHaveKey('stderr');
+        expect($result['exitCode'])->toBe(127)
+            ->and($result['stdout'])->toBe('')
+            ->and($result['stderr'])->toContain('/nonexistent/binary/that/does/not/exist/xyz123');
+    });
+
+    it('runs an executable whose path contains spaces as a single command', function (): void {
+        $root = sys_get_temp_dir() . '/devai runner ' . uniqid();
+        $dir = $root . '/My Apps/vendor/bin';
+        mkdir($dir, 0755, true);
+        $bin = $dir . '/marko';
+        file_put_contents($bin, "#!/bin/sh\necho \"ran with: \$1\"\n");
+        chmod($bin, 0755);
+
+        try {
+            $result = (new CommandRunner())->run($bin, ['mcp:serve']);
+        } finally {
+            unlink($bin);
+            rmdir($dir);
+            rmdir(dirname($dir));
+            rmdir(dirname($dir, 2));
+            rmdir($root);
+        }
+
+        expect($result['exitCode'])->toBe(0)
+            ->and($result['stdout'])->toContain('ran with: mcp:serve');
+    });
+
+    it('passes arguments verbatim without shell interpretation', function (): void {
+        $result = (new CommandRunner())->run('printf', ['%s', 'a b; echo injected $HOME']);
+
+        expect($result['stdout'])->toBe('a b; echo injected $HOME');
+    });
+
+    it('reports a binary on PATH and rejects a missing one', function (): void {
+        $runner = new CommandRunner();
+
+        expect($runner->isOnPath('sh'))->toBeTrue()
+            ->and($runner->isOnPath('definitely-not-a-real-binary-xyz123'))->toBeFalse()
+            ->and($runner->isOnPath('sh; echo injected'))->toBeFalse();
     });
 });

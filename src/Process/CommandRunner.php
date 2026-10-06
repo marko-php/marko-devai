@@ -14,19 +14,42 @@ class CommandRunner implements CommandRunnerInterface
         string $command,
         array $args = [],
     ): array {
-        $cmd = escapeshellcmd($command) . ' ' . implode(' ', array_map('escapeshellarg', $args));
+        // Pass the command as an argv array so proc_open execs it directly, with no
+        // shell in between. Each element reaches the child verbatim, so a binary path
+        // containing spaces (e.g. "/Users/x/My Apps/app/vendor/bin/marko") stays one
+        // argument instead of splitting into a different executable plus arguments.
+        $cmd = [$command, ...array_values($args)];
         // Detach stdin (read from /dev/null) so a child can never block waiting on
         // terminal input. Without this the child inherits the parent's TTY and any
         // unexpected prompt — e.g. composer's allow-plugins trust question — deadlocks
         // forever, with the prompt hidden because we buffer the child's output.
-        $proc = proc_open(
-            $cmd,
-            [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-            $pipes,
-        );
+        //
+        // Without a shell, a missing executable makes proc_open emit a warning and
+        // return false instead of the child exiting 127. Capture that warning and turn
+        // it into the result shape callers already handle (non-zero exit + stderr).
+        $spawnError = null;
+        set_error_handler(static function (int $errno, string $message) use (&$spawnError): bool {
+            $spawnError = $message;
+
+            return true;
+        });
+
+        try {
+            $proc = proc_open(
+                $cmd,
+                [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                $pipes,
+            );
+        } finally {
+            restore_error_handler();
+        }
 
         if (!is_resource($proc)) {
-            return ['exitCode' => -1, 'stdout' => '', 'stderr' => 'proc_open failed'];
+            return [
+                'exitCode' => 127,
+                'stdout' => '',
+                'stderr' => "Could not start `$command`: " . ($spawnError ?? 'proc_open failed'),
+            ];
         }
 
         stream_set_blocking($pipes[1], false);
@@ -69,7 +92,9 @@ class CommandRunner implements CommandRunnerInterface
 
     public function isOnPath(string $binary): bool
     {
-        $result = $this->run('command', ['-v', $binary]);
+        // `command` is a shell builtin, so it has to run inside sh. The binary name is
+        // passed as a positional parameter ($1), never interpolated into the script.
+        $result = $this->run('sh', ['-c', 'command -v "$1"', 'sh', $binary]);
 
         return $result['exitCode'] === 0 && trim($result['stdout']) !== '';
     }

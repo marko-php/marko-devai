@@ -7,6 +7,7 @@
         "php": "^8.5",
         "marko/core": "self.version",
         "marko/cli": "self.version",
+        "marko/config": "self.version",
         "marko/mcp": "self.version",
         "marko/lsp": "self.version",
         "marko/docs": "self.version",

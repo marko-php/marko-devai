@@ -9,6 +9,14 @@ use Marko\DevAi\Process\CommandRunnerInterface;
 
 class IntelephenseEnsurer implements IntelephenseEnsurerInterface
 {
+    /**
+     * The exact intelephense release installed globally. Pinned so a compromised or
+     * broken upstream release is never pulled in automatically; bump deliberately.
+     */
+    public const string VERSION = '1.18.5';
+
+    public const string PACKAGE = 'intelephense@' . self::VERSION;
+
     public function __construct(private CommandRunnerInterface $runner) {}
 
     /**
@@ -16,7 +24,7 @@ class IntelephenseEnsurer implements IntelephenseEnsurerInterface
      *
      * Returns an EnsureResult describing what happened:
      *   - alreadyInstalled — intelephense was already on PATH; nothing done.
-     *   - installed        — npm install -g intelephense ran successfully.
+     *   - installed        — npm install -g intelephense@VERSION ran successfully.
      *   - skipped          — $skip was true; installation was explicitly opted out.
      *
      * @throws DevAiInstallException
@@ -35,7 +43,7 @@ class IntelephenseEnsurer implements IntelephenseEnsurerInterface
             throw DevAiInstallException::npmRequiredForLspDeps();
         }
 
-        $result = $this->runner->run('npm', ['install', '-g', 'intelephense']);
+        $result = $this->runner->run('npm', ['install', '-g', self::PACKAGE]);
 
         if (($result['exitCode'] ?? 1) !== 0) {
             throw DevAiInstallException::intelephenseInstallFailed($result['stderr'] ?? '');

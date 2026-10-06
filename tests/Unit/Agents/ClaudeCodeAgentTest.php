@@ -323,6 +323,29 @@ describe('monorepo detection', function (): void {
             devaiRemoveDir($root);
         }
     });
+
+    it('pins the github marketplace source to a ref instead of tracking the default branch', function (): void {
+        $root = devaiTempDir();
+
+        try {
+            (new ClaudeCodeAgent(devaiRunner()))->install(devaiContext(), $root);
+            $defaultRef = json_decode(
+                (string) file_get_contents($root . '/.claude/settings.json'),
+                true,
+            )['extraKnownMarketplaces']['marko']['source']['ref'];
+
+            (new ClaudeCodeAgent(devaiRunner(), null, 'deadbeef'))->install(devaiContext(force: true), $root);
+            $customRef = json_decode(
+                (string) file_get_contents($root . '/.claude/settings.json'),
+                true,
+            )['extraKnownMarketplaces']['marko']['source']['ref'];
+
+            expect($defaultRef)->toBe(ClaudeCodeAgent::DEFAULT_MARKETPLACE_REF)
+                ->and($customRef)->toBe('deadbeef');
+        } finally {
+            devaiRemoveDir($root);
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------

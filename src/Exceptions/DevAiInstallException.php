@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Marko\DevAi\Exceptions;
 
 use Marko\Core\Exceptions\MarkoException;
+use Marko\DevAi\Installation\IntelephenseEnsurer;
 
 class DevAiInstallException extends MarkoException
 {
@@ -31,9 +32,21 @@ class DevAiInstallException extends MarkoException
     public static function intelephenseInstallFailed(string $stderr): static
     {
         return new static(
-            message: 'Failed to auto-install intelephense via npm install -g',
+            message: 'Failed to auto-install ' . IntelephenseEnsurer::PACKAGE . ' via npm install -g',
             context: $stderr,
-            suggestion: 'Run `npm install -g intelephense` manually, or pass --skip-lsp-deps.',
+            suggestion: 'Run `npm install -g ' . IntelephenseEnsurer::PACKAGE . '` manually, or pass --skip-lsp-deps.',
+        );
+    }
+
+    public static function invalidConfig(
+        string $key,
+        string $expected,
+        mixed $value,
+    ): static {
+        return new static(
+            message: "Invalid devai config value for '$key': expected $expected, got " . get_debug_type($value),
+            context: 'While reading config/devai.php',
+            suggestion: "Set '$key' to $expected, or to null to use the default.",
         );
     }
 }

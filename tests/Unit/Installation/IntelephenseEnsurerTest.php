@@ -71,7 +71,7 @@ it('returns alreadyInstalled when intelephense is on PATH', function (): void {
         ->and($result->isSkipped())->toBeFalse();
 });
 
-it('attempts npm install -g intelephense when intelephense is missing and npm is on PATH', function (): void {
+it('npm installs the pinned intelephense globally when it is missing', function (): void {
     $runner = makeIntelephenseRunner(intelephenseOnPath: false, npmOnPath: true);
     $ensurer = new IntelephenseEnsurer($runner);
 
@@ -79,7 +79,8 @@ it('attempts npm install -g intelephense when intelephense is missing and npm is
 
     $npmCalls = array_filter($runner->calls, fn ($call) => $call[0] === 'npm');
     expect(array_values($npmCalls))->not->toBeEmpty()
-        ->and($npmCalls[array_key_first($npmCalls)][1])->toBe(['install', '-g', 'intelephense']);
+        ->and($npmCalls[array_key_first($npmCalls)][1])->toBe(['install', '-g', IntelephenseEnsurer::PACKAGE])
+        ->and(IntelephenseEnsurer::PACKAGE)->toBe('intelephense@' . IntelephenseEnsurer::VERSION);
 });
 
 it('returns installed result on successful npm install', function (): void {
@@ -134,4 +135,9 @@ it('does not invoke npm install when skip flag is true', function (): void {
 
     $npmCalls = array_filter($runner->calls, fn ($call) => $call[0] === 'npm');
     expect(array_values($npmCalls))->toBeEmpty();
+});
+
+it('pins intelephense to an exact semver release, never a range or tag', function (): void {
+    expect(IntelephenseEnsurer::VERSION)->toMatch('/^\d+\.\d+\.\d+$/')
+        ->and(IntelephenseEnsurer::PACKAGE)->toBe('intelephense@' . IntelephenseEnsurer::VERSION);
 });

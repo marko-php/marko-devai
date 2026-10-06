@@ -14,9 +14,18 @@ use Marko\DevAi\Writing\GuidelinesWriter;
 
 readonly class ClaudeCodeAgent implements AgentInterface
 {
+    /**
+     * Git ref the GitHub plugin marketplace is pinned to when nothing more specific
+     * is known (see AgentRegistry). Claude Code auto-installs marketplace plugins once
+     * a folder is trusted, so tracking the default branch would run whatever lands
+     * on it next on every developer's machine.
+     */
+    public const string DEFAULT_MARKETPLACE_REF = '0.9.0';
+
     public function __construct(
         private CommandRunnerInterface $commandRunner,
         private ?IntelephenseEnsurerInterface $intelephenseEnsurer = null,
+        private string $marketplaceRef = self::DEFAULT_MARKETPLACE_REF,
     ) {}
 
     public function name(): string
@@ -237,7 +246,7 @@ CLAUDE;
             return ['source' => ['source' => 'local', 'path' => '.']];
         }
 
-        return ['source' => ['source' => 'github', 'repo' => 'marko-php/marko']];
+        return ['source' => ['source' => 'github', 'repo' => 'marko-php/marko', 'ref' => $this->marketplaceRef]];
     }
 
     private function isMonorepo(string $projectRoot): bool

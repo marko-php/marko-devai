@@ -12,6 +12,7 @@ use Marko\DevAi\Guidelines\GuidelinesAggregator;
 use Marko\DevAi\Installation\AgentRegistry;
 use Marko\DevAi\Installation\DocsDriverResolver;
 use Marko\DevAi\Installation\InstallationOrchestrator;
+use Marko\DevAi\Installation\IntelephenseEnsurer;
 use Marko\DevAi\Process\CommandRunnerInterface;
 use Marko\DevAi\Rendering\AgentsMdRenderer;
 use Marko\DevAi\Skills\SkillsDistributor;
@@ -28,8 +29,9 @@ use Marko\Testing\Fake\FakeConfirmationPrompter;
 function makeInstallCmdRunner(
     bool $composerOnPath = true,
     int $requireExitCode = 0,
+    bool $npmOnPath = false,
 ): CommandRunnerInterface {
-    return new class ($composerOnPath, $requireExitCode) implements CommandRunnerInterface
+    return new class ($composerOnPath, $requireExitCode, $npmOnPath) implements CommandRunnerInterface
     {
         /** @var list<array{string, list<string>}> */
         public array $calls = [];
@@ -37,6 +39,7 @@ function makeInstallCmdRunner(
         public function __construct(
             private readonly bool $composerOnPath,
             private readonly int $requireExitCode,
+            private readonly bool $npmOnPath,
         ) {}
 
         public function run(
@@ -55,7 +58,11 @@ function makeInstallCmdRunner(
         public function isOnPath(
             string $binary,
         ): bool {
-            return $binary === 'composer' && $this->composerOnPath;
+            return match ($binary) {
+                'composer' => $this->composerOnPath,
+                'npm' => $this->npmOnPath,
+                default => false,
+            };
         }
     };
 }
@@ -67,8 +74,9 @@ function makeInstallCmdRunner(
  */
 function makeInstallCmdOrchestrator(
     string $tempRoot,
+    ?CommandRunnerInterface $runner = null,
 ): InstallationOrchestrator {
-    $runner = devaiRunner();
+    $runner ??= devaiRunner();
 
     return new InstallationOrchestrator(
         registry: new AgentRegistry($runner),
@@ -179,7 +187,7 @@ it('is registered via Command attribute with name devai:install', function (): v
 it('declares its boolean flags on the Command attribute', function (): void {
     $attribute = new ReflectionClass(InstallCommand::class)->getAttributes(Command::class)[0]->newInstance();
 
-    expect($attribute->flags)->toBe(['force', 'update-gitignore', 'skip-lsp-deps']);
+    expect($attribute->flags)->toBe(['force', 'update-gitignore', 'skip-lsp-deps', 'yes']);
 });
 
 // ---------------------------------------------------------------------------
@@ -314,6 +322,105 @@ it('writes a helpful message and does not throw when composer require exits non-
     $text = readInstallCmdOutput($stream);
     expect($exitCode)->toBe(0)
         ->and($text)->toContain('marko/docs-fts');
+});
+
+// ---------------------------------------------------------------------------
+// Global intelephense install confirmation
+// ---------------------------------------------------------------------------
+
+/**
+ * Run `devai:install --agents=claude-code` with npm on PATH and intelephense missing,
+ * so the global LSP install is on the table.
+ *
+ * @param list<string> $extraArgs
+ * @return array{runner: CommandRunnerInterface, text: string}
+ */
+function runClaudeInstallWithNpm(
+    string $tempRoot,
+    FakeConfirmationPrompter $prompter,
+    array $extraArgs = [],
+): array {
+    chdir($tempRoot);
+    $runner = makeInstallCmdRunner(composerOnPath: false, npmOnPath: true);
+    $cmd = makeInstallCmd(
+        orchestrator: makeInstallCmdOrchestrator($tempRoot, $runner),
+        resolver: new DocsDriverResolver(),
+        prompter: $prompter,
+        runner: $runner,
+    );
+
+    ['stream' => $stream, 'output' => $output] = makeInstallCmdOutput();
+    $cmd->execute(new Input(['marko', 'devai:install', '--agents=claude-code', ...$extraArgs]), $output);
+
+    return ['runner' => $runner, 'text' => readInstallCmdOutput($stream)];
+}
+
+/** @return list<list<string>> args of every `npm` call */
+function installCmdNpmCalls(
+    CommandRunnerInterface $runner,
+): array {
+    return array_values(array_map(
+        fn (array $call): array => $call[1],
+        array_filter($runner->calls, fn (array $call): bool => $call[0] === 'npm'),
+    ));
+}
+
+it('asks before installing the pinned intelephense globally and installs it on yes', function (): void {
+    $prompter = new FakeConfirmationPrompter(answers: [true]);
+
+    ['runner' => $runner] = runClaudeInstallWithNpm($this->tempRoot, $prompter);
+
+    expect($prompter->asked)->toHaveCount(1)
+        ->and($prompter->asked[0])->toContain('intelephense@' . IntelephenseEnsurer::VERSION)
+        ->and($prompter->asked[0])->toContain('npm install -g')
+        ->and(installCmdNpmCalls($runner))->toBe([['install', '-g', IntelephenseEnsurer::PACKAGE]]);
+});
+
+it('skips the global intelephense install when the user declines and says how to install it later', function (): void {
+    $prompter = new FakeConfirmationPrompter(answers: [false]);
+
+    ['runner' => $runner, 'text' => $text] = runClaudeInstallWithNpm($this->tempRoot, $prompter);
+
+    expect(installCmdNpmCalls($runner))->toBe([])
+        ->and($text)->toContain('npm install -g ' . IntelephenseEnsurer::PACKAGE);
+});
+
+it('installs intelephense without asking when --yes is passed', function (): void {
+    $prompter = new FakeConfirmationPrompter();
+
+    ['runner' => $runner] = runClaudeInstallWithNpm($this->tempRoot, $prompter, ['--yes']);
+
+    expect($prompter->asked)->toBe([])
+        ->and(installCmdNpmCalls($runner))->toBe([['install', '-g', IntelephenseEnsurer::PACKAGE]]);
+});
+
+it('does not ask about intelephense when the session is not interactive', function (): void {
+    $prompter = new FakeConfirmationPrompter(interactive: false);
+
+    ['runner' => $runner] = runClaudeInstallWithNpm($this->tempRoot, $prompter);
+
+    expect($prompter->asked)->toBe([])
+        ->and(installCmdNpmCalls($runner))->toBe([['install', '-g', IntelephenseEnsurer::PACKAGE]]);
+});
+
+it('honours --skip-lsp-deps when agents are auto-detected', function (): void {
+    chdir($this->tempRoot);
+    $prompter = new FakeConfirmationPrompter();
+    $runner = makeInstallCmdRunner(composerOnPath: false, npmOnPath: true);
+    $cmd = makeInstallCmd(
+        orchestrator: makeInstallCmdOrchestrator($this->tempRoot, $runner),
+        resolver: new DocsDriverResolver(),
+        prompter: $prompter,
+        runner: $runner,
+    );
+
+    $cmd->execute(
+        new Input(['marko', 'devai:install', '--skip-lsp-deps']),
+        new Output(fopen('php://memory', 'r+')),
+    );
+
+    expect($prompter->asked)->toBe([])
+        ->and(installCmdNpmCalls($runner))->toBe([]);
 });
 
 // ---------------------------------------------------------------------------
