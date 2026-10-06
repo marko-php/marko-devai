@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Marko\Core\Command\ConfirmationPrompterInterface;
+
 it('has composer.json with name marko/devai and dependencies on mcp and lsp', function (): void {
     $composerPath = dirname(__DIR__, 2) . '/composer.json';
     $composer = json_decode(file_get_contents($composerPath), true);
@@ -48,4 +50,11 @@ it('has module.php returning a manifest with bindings and singletons keys', func
         ->and($module['bindings'])->toBeArray()
         ->and($module)->toHaveKey('singletons')
         ->and($module['singletons'])->toBeArray();
+});
+
+it('does not bind a confirmation prompter in the devai module', function (): void {
+    // marko/core binds ConfirmationPrompterInterface; a second binding here would shadow it
+    $module = require dirname(__DIR__, 2) . '/module.php';
+
+    expect($module['bindings'])->not->toHaveKey(ConfirmationPrompterInterface::class);
 });

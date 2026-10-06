@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+use Marko\Core\Command\ConfirmationPrompterInterface;
+use Marko\Core\Command\Input;
+use Marko\Core\Command\Output;
+use Marko\Core\Command\StdinConfirmationPrompter;
 use Marko\Core\Container\BindingRegistry;
 use Marko\Core\Container\Container;
 use Marko\Core\Container\ContainerInterface;
@@ -17,6 +21,10 @@ function bootDevAiContainer(): Container
     $container = new Container();
     $container->instance(ContainerInterface::class, $container);
     $container->instance(ProjectPaths::class, new ProjectPaths(sys_get_temp_dir()));
+    // What Application binds and CommandRunner registers for a running command
+    $container->bind(ConfirmationPrompterInterface::class, StdinConfirmationPrompter::class);
+    $container->instance(Input::class, new Input(['marko', 'devai:install']));
+    $container->instance(Output::class, new Output(fopen('php://memory', 'w')));
 
     $parser = new ManifestParser();
     $registry = new BindingRegistry($container);

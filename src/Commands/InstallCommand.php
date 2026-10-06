@@ -6,6 +6,7 @@ namespace Marko\DevAi\Commands;
 
 use Marko\Core\Attributes\Command;
 use Marko\Core\Command\CommandInterface;
+use Marko\Core\Command\ConfirmationPrompterInterface;
 use Marko\Core\Command\Input;
 use Marko\Core\Command\Output;
 use Marko\DevAi\Exceptions\DevAiInstallException;
@@ -14,12 +15,11 @@ use Marko\DevAi\Installation\DocsDriverResolver;
 use Marko\DevAi\Installation\InstallationContext;
 use Marko\DevAi\Installation\InstallationOrchestrator;
 use Marko\DevAi\Process\CommandRunnerInterface;
-use Marko\DevAi\Process\ConfirmationPrompterInterface;
 
 #[Command(
     name: 'devai:install',
     description: 'Install Marko AI development tooling for selected agents',
-    flags: ['force', 'update-gitignore', 'skip-lsp-deps', 'no-interaction'],
+    flags: ['force', 'update-gitignore', 'skip-lsp-deps'],
 )]
 readonly class InstallCommand implements CommandInterface
 {
@@ -62,7 +62,7 @@ readonly class InstallCommand implements CommandInterface
             $context = $this->buildContextFromDetection($detected, $force, $gitignoreArg, $output);
         }
 
-        $this->maybeInstallDocsDriver($input, $output, $projectRoot);
+        $this->maybeInstallDocsDriver($output, $projectRoot);
 
         $result = $this->orchestrator->install(
             $context,
@@ -118,11 +118,10 @@ readonly class InstallCommand implements CommandInterface
 
     /**
      * Offer to install the recommended docs search driver when none is present
-     * and the session is interactive. Does nothing (falls through gracefully) in
-     * non-interactive mode, CI, or when a driver is already installed.
+     * and the session is interactive. Does nothing (falls through gracefully) with
+     * --no-interaction, without a terminal (CI), or when a driver is already installed.
      */
     private function maybeInstallDocsDriver(
-        Input $input,
         Output $output,
         string $projectRoot,
     ): void {
@@ -136,9 +135,7 @@ readonly class InstallCommand implements CommandInterface
             return;
         }
 
-        $noInteraction = $input->hasOption('no-interaction');
-
-        if ($noInteraction || !$this->confirmationPrompter->isInteractive()) {
+        if (!$this->confirmationPrompter->isInteractive()) {
             return;
         }
 

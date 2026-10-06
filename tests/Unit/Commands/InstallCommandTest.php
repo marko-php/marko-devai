@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Marko\Core\Attributes\Command;
 use Marko\Core\Command\CommandInterface;
+use Marko\Core\Command\ConfirmationPrompterInterface;
 use Marko\Core\Command\Input;
 use Marko\Core\Command\Output;
 use Marko\DevAi\Commands\InstallCommand;
@@ -12,46 +13,22 @@ use Marko\DevAi\Installation\AgentRegistry;
 use Marko\DevAi\Installation\DocsDriverResolver;
 use Marko\DevAi\Installation\InstallationOrchestrator;
 use Marko\DevAi\Process\CommandRunnerInterface;
-use Marko\DevAi\Process\ConfirmationPrompterInterface;
 use Marko\DevAi\Rendering\AgentsMdRenderer;
 use Marko\DevAi\Skills\SkillsDistributor;
+use Marko\Testing\Fake\FakeConfirmationPrompter;
 
 // ---------------------------------------------------------------------------
 // Local test helpers
 // ---------------------------------------------------------------------------
 
 /**
- * A scripted ConfirmationPrompterInterface double.
- */
-function makeInstallCmdFakePrompter(bool $answer, bool $interactive = true): ConfirmationPrompterInterface
-{
-    return new readonly class ($answer, $interactive) implements ConfirmationPrompterInterface
-    {
-        public function __construct(
-            private bool $answer,
-            private bool $interactive,
-        ) {}
-
-        public function isInteractive(): bool
-        {
-            return $this->interactive;
-        }
-
-        public function confirm(
-            string $question,
-            bool $default,
-        ): bool {
-            return $this->answer;
-        }
-    };
-}
-
-/**
  * A CommandRunner double that records every call and returns a configurable
  * exit code for `composer require` commands.
  */
-function makeInstallCmdRunner(bool $composerOnPath = true, int $requireExitCode = 0): CommandRunnerInterface
-{
+function makeInstallCmdRunner(
+    bool $composerOnPath = true,
+    int $requireExitCode = 0,
+): CommandRunnerInterface {
     return new class ($composerOnPath, $requireExitCode) implements CommandRunnerInterface
     {
         /** @var list<array{string, list<string>}> */
@@ -75,8 +52,9 @@ function makeInstallCmdRunner(bool $composerOnPath = true, int $requireExitCode 
             return ['exitCode' => 0, 'stdout' => '', 'stderr' => ''];
         }
 
-        public function isOnPath(string $binary): bool
-        {
+        public function isOnPath(
+            string $binary,
+        ): bool {
             return $binary === 'composer' && $this->composerOnPath;
         }
     };
@@ -87,8 +65,9 @@ function makeInstallCmdRunner(bool $composerOnPath = true, int $requireExitCode 
  * Returns status=installed without running agent installs or real file system writes,
  * but it does create .marko/devai.json (orchestrator requires this).
  */
-function makeInstallCmdOrchestrator(string $tempRoot): InstallationOrchestrator
-{
+function makeInstallCmdOrchestrator(
+    string $tempRoot,
+): InstallationOrchestrator {
     $runner = devaiRunner();
 
     return new InstallationOrchestrator(
@@ -124,8 +103,10 @@ function makeInstallCmd(
  *
  * @param array<string, string> $drivers
  */
-function writeInstallCmdKnownDrivers(string $tempRoot, array $drivers): void
-{
+function writeInstallCmdKnownDrivers(
+    string $tempRoot,
+    array $drivers,
+): void {
     $docsDir = $tempRoot . '/vendor/marko/docs';
     mkdir($docsDir, 0755, true);
     $export = var_export($drivers, true);
@@ -133,8 +114,10 @@ function writeInstallCmdKnownDrivers(string $tempRoot, array $drivers): void
 }
 
 /** Create a fake vendor directory for the given package. */
-function makeInstallCmdVendorDir(string $tempRoot, string $package): void
-{
+function makeInstallCmdVendorDir(
+    string $tempRoot,
+    string $package,
+): void {
     mkdir($tempRoot . '/vendor/' . $package, 0755, true);
 }
 
@@ -147,8 +130,9 @@ function makeInstallCmdOutput(): array
 }
 
 /** Read all output written to the memory stream. */
-function readInstallCmdOutput(mixed $stream): string
-{
+function readInstallCmdOutput(
+    mixed $stream,
+): string {
     rewind($stream);
 
     return (string) stream_get_contents($stream);
@@ -195,7 +179,7 @@ it('is registered via Command attribute with name devai:install', function (): v
 it('declares its boolean flags on the Command attribute', function (): void {
     $attribute = new ReflectionClass(InstallCommand::class)->getAttributes(Command::class)[0]->newInstance();
 
-    expect($attribute->flags)->toBe(['force', 'update-gitignore', 'skip-lsp-deps', 'no-interaction']);
+    expect($attribute->flags)->toBe(['force', 'update-gitignore', 'skip-lsp-deps']);
 });
 
 // ---------------------------------------------------------------------------
@@ -209,19 +193,22 @@ it('offers to install the recommended driver and runs composer require on yes', 
     chdir($this->tempRoot);
 
     $runner = makeInstallCmdRunner(composerOnPath: true);
+    $prompter = new FakeConfirmationPrompter(answers: [true]);
     $cmd = makeInstallCmd(
         orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
         resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: true),
+        prompter: $prompter,
         runner: $runner,
     );
 
-    ['stream' => $stream, 'output' => $output] = makeInstallCmdOutput();
+    ['output' => $output] = makeInstallCmdOutput();
     $cmd->execute(new Input(['marko', 'devai:install']), $output);
 
     expect($runner->calls)->toContain(
         ['composer', ['require', '--dev', '--no-interaction', '--no-progress', 'marko/docs-fts']],
-    );
+    )->and($prompter->asked)->toBe([
+        'No docs search driver installed. Install marko/docs-fts to enable search_docs?',
+    ]);
 });
 
 it('does not install anything when the user answers no', function (): void {
@@ -234,7 +221,7 @@ it('does not install anything when the user answers no', function (): void {
     $cmd = makeInstallCmd(
         orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
         resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: false),
+        prompter: new FakeConfirmationPrompter(answers: [false]),
         runner: $runner,
     );
 
@@ -244,7 +231,7 @@ it('does not install anything when the user answers no', function (): void {
     expect($composerCalls)->toBeEmpty();
 });
 
-it('does not prompt or install when run with --no-interaction', function (): void {
+it('does not prompt or install when the session is not interactive', function (): void {
     writeInstallCmdKnownDrivers($this->tempRoot, [
         'marko/docs-fts' => 'Full-text search driver (recommended)',
     ]);
@@ -254,27 +241,7 @@ it('does not prompt or install when run with --no-interaction', function (): voi
     $cmd = makeInstallCmd(
         orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
         resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: true),
-        runner: $runner,
-    );
-
-    $cmd->execute(new Input(['marko', 'devai:install', '--no-interaction']), new Output(fopen('php://memory', 'r+')));
-
-    $composerCalls = array_filter($runner->calls, fn ($c) => $c[0] === 'composer');
-    expect($composerCalls)->toBeEmpty();
-});
-
-it('does not prompt or install when the session is not interactive (no TTY)', function (): void {
-    writeInstallCmdKnownDrivers($this->tempRoot, [
-        'marko/docs-fts' => 'Full-text search driver (recommended)',
-    ]);
-    chdir($this->tempRoot);
-
-    $runner = makeInstallCmdRunner(composerOnPath: true);
-    $cmd = makeInstallCmd(
-        orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
-        resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: true, interactive: false),
+        prompter: new FakeConfirmationPrompter(interactive: false),
         runner: $runner,
     );
 
@@ -295,7 +262,7 @@ it('does not prompt when a docs driver is already installed', function (): void 
     $cmd = makeInstallCmd(
         orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
         resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: true),
+        prompter: new FakeConfirmationPrompter(answers: [true]),
         runner: $runner,
     );
 
@@ -315,7 +282,7 @@ it('writes a helpful message when composer is not on PATH', function (): void {
     $cmd = makeInstallCmd(
         orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
         resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: true),
+        prompter: new FakeConfirmationPrompter(answers: [true]),
         runner: $runner,
     );
 
@@ -337,7 +304,7 @@ it('writes a helpful message and does not throw when composer require exits non-
     $cmd = makeInstallCmd(
         orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
         resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: true),
+        prompter: new FakeConfirmationPrompter(answers: [true]),
         runner: $runner,
     );
 
@@ -359,7 +326,7 @@ it('prints a multi-instance config-isolation tip when Claude Code is installed',
     $cmd = makeInstallCmd(
         orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
         resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: false, interactive: false),
+        prompter: new FakeConfirmationPrompter(interactive: false),
         runner: makeInstallCmdRunner(composerOnPath: true),
     );
 
@@ -380,7 +347,7 @@ it('does not print the Claude Code tip when only non-Claude agents are installed
     $cmd = makeInstallCmd(
         orchestrator: makeInstallCmdOrchestrator($this->tempRoot),
         resolver: new DocsDriverResolver(),
-        prompter: makeInstallCmdFakePrompter(answer: false, interactive: false),
+        prompter: new FakeConfirmationPrompter(interactive: false),
         runner: makeInstallCmdRunner(composerOnPath: true),
     );
 
